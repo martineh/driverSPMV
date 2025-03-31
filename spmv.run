@@ -9,7 +9,7 @@ TMIN=2.0
 #------------------------------------------------------------
 # Validation = Enable (T) , Disable (F)
 #------------------------------------------------------------
-TEST=T
+TEST=F
 #------------------------------------------------------------
 
 #------------------------------------------------------------
@@ -28,6 +28,12 @@ LOGS="logs"
 
 id=$(/usr/bin/ls $LOGS | /usr/bin/wc -l)
 LOGS=$LOGS"/log_"$id".csv"
+
+line=$(/usr/bin/cat Makefile.inc | /usr/bin/grep "LIB_SELECT" | /usr/bin/grep GINKGO | /usr/bin/wc -l)
+
+if [ $line -eq 1 ] ; then 
+  export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH
+fi
 
 /usr/bin/taskset -c 0 ./build/spmv_driver $TMIN $TEST $PATH $LOGS
 
