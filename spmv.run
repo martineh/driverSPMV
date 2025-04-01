@@ -16,7 +16,9 @@ TEST=F
 # Matrix Path
 #------------------------------------------------------------
 PREFIX="/media/hmartinez/Nuevo vol/sparse_matrix/MM/"
+#PREFIX="/home/hmartinez/workspace/driverSPMV.backup/matrix/"
 PATH="general_matrix.txt"
+#PATH="symmetric_matrix.txt"
 #------------------------------------------------------------
 
 #------------------------------------------------------------

@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
     MatInfo info;
     PetscViewer viewer;
 
-    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_TRUE));
+    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
 
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
