@@ -8,6 +8,7 @@
   #include "ginkgo/ginkgo.hpp"
 #endif
 
+#include <filesystem>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -15,16 +16,20 @@
 #include <cmath>
 #include <dirent.h>
 
+#define MAX_LINE 1024
+
 using ValueType = double;  // FP64
 using IndexType = int;
 
 void spmv_baseline (const IndexType* row_ptrs, const IndexType* col_idxs, const ValueType* values,
-    IndexType num_rows, const ValueType* b, ValueType* c) {
+  IndexType num_rows, const ValueType* b, ValueType* c) {
   for (IndexType row = 0; row < num_rows; ++row) {
-    c[row] = 0.0;
+    ValueType sum = 0.0;
     for (IndexType k = row_ptrs[row]; k < row_ptrs[row + 1]; ++k) {
-      c[row] += values[k] * b[col_idxs[k]];
+      sum += values[k] * b[col_idxs[k]];
+      //if (row < 2) printf("c[%d] = (%.5f += %.5f * %.5f) [%d - %d]\n", row, sum, values[k], b[col_idxs[k]], row_ptrs[row], row_ptrs[row + 1]);
     }
+    c[row] = sum;
   }
 }
 
@@ -49,13 +54,15 @@ double gemm_validation(size_t m, const ValueType *Vref, const ValueType *V) {
 
 
 int main(int argc, char* argv[]) {
-  char   matrix_name[512];
+  char   matrix_name[MAX_LINE/2];
+  char   matrix_path[MAX_LINE];
   double tmin  = 0.0;
   int    nreps = 0;
   double time  = 0.0;
+  double basetime  = 0.0;
   char   test;
-  double t1, t2, flops, GFLOPS, err;
-  char   *directory, *logs;
+  double t1, t2, flops, baseGFLOPS, GFLOPS, err;
+  char   *directory, *logs, *prefix;
   DIR    *dir;
   size_t mnz;
   struct dirent *entry;
@@ -63,16 +70,15 @@ int main(int argc, char* argv[]) {
   int    nrows, ncols;
   FILE   *fd_logs;
 
-  tmin      = atof(argv[1]); 
-  test      = argv[2][0];
-  directory = argv[3];
-  logs      = argv[4];
-
-  dir = opendir(directory);
-  if (!dir) {
-      perror("ERR: Failed to open the directory\n");
-      exit(-1);
-  }
+  tmin = atof(argv[1]); 
+  test = argv[2][0];
+  std::ifstream matrix_list(argv[3]);
+  if (!matrix_list) {
+    std::cerr << "Error opening file\n";
+    return EXIT_FAILURE;
+   }
+  logs   = argv[4];
+  prefix = argv[5];
 
   fd_logs = fopen(logs, "w");
   fprintf(fd_logs, "#Matrix_name;MNZ;M;K;Time;GFlops\n");
@@ -83,7 +89,7 @@ int main(int argc, char* argv[]) {
   printf("=====================================================\n");
   printf("| Minimum Time (s) : %s%-30.2f%s |\n", COLOR_BOLDCYAN, tmin, COLOR_RESET);
   printf("| Test             : %s%-30c%s |\n", COLOR_BOLDCYAN, test, COLOR_RESET); 
-  printf("| Matrix Path      : %s%-30s%s |\n", COLOR_BOLDCYAN, directory, COLOR_RESET); 
+  printf("| Matrix List      : %s%-30s%s |\n", COLOR_BOLDCYAN, argv[3], COLOR_RESET); 
   printf("| Output Log       : %s%-30s%s |\n", COLOR_BOLDCYAN, logs, COLOR_RESET); 
   #ifdef LIB_PETSC
   printf("| Library selected : %s%-30s%s |\n", COLOR_BOLDCYAN, "PETSc", COLOR_RESET); 
@@ -92,25 +98,19 @@ int main(int argc, char* argv[]) {
   #endif
   printf("=====================================================\n\n");
 
-  printf("=============================================================================================================\n");
-  printf("|                                               %sSPMV DRIVER%s                                                 |\n", COLOR_BOLDYELLOW, COLOR_RESET);
-  printf("=============================================================================================================\n");
-  printf("|  MATRIX NAME                   NNZ          M          K    |    TIME        GFLOPS      ERR    |   TEST  |\n");
-  printf("+------------------------------------------------------------------------------------------------------------\n");
+  printf("============================================================================================================\n");
+  printf("|                                                   %sSPMV DRIVER%s                                            |\n", COLOR_BOLDYELLOW, COLOR_RESET);
+  printf("============================================================================================================\n");
+  printf("|                       MATRIX INFORMATION                    |               TARGET              |        |\n");
+  printf("+-------------------------------------------------------------+-----------------------------------+  TEST  |\n");
+  printf("|  MATRIX NAME                   NNZ          M          K    |    TIME        GFLOPS      ERR    |        |\n");
+  printf("+-------------------------------------------------------------+-----------------------------------+--------+\n");
 
-  while ((entry = readdir(dir)) != NULL) {
-    if (entry->d_type != DT_REG) continue; //Only regular files
-
-    sprintf(matrix_name, "%s/%s", directory, entry->d_name);
-
-    //----------------------------------------------------------------------------
-    //SPMV GINKGO
-    //----------------------------------------------------------------------------
-    /*
-    */
-    //----------------------------------------------------------------------------
-    //----------------------------------------------------------------------------
-    
+  while (matrix_list.getline(matrix_name, MAX_LINE)) {
+    //while ((entry = readdir(dir)) != NULL) {
+    //if (entry->d_type != DT_REG) continue; //Only regular files
+    if (matrix_name[0] == '%') continue;
+    sprintf(matrix_path, "%s/%s", prefix, matrix_name);
       
     //----------------------------------------------------------------------------
     //SPMV PETSc
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
     MatInfo info;
     PetscViewer viewer;
 
-    PetscCall(MatCreateFromMTX(&A, matrix_name, PETSC_TRUE));
+    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_TRUE));
 
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
@@ -142,7 +142,7 @@ int main(int argc, char* argv[]) {
     // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
 
     auto A = gko::read<gko::matrix::Csr<ValueType, IndexType>>(
-        std::ifstream(matrix_name), ref_exec
+        std::ifstream(matrix_path), ref_exec
     );
 
     auto b = gko::matrix::Dense<ValueType>::create(
@@ -175,13 +175,18 @@ int main(int argc, char* argv[]) {
     //----------------------------------------------------------------------------
     //----------------------------------------------------------------------------
 
-
     time   = time / nreps;
     flops  = mnz * 2.0;
     GFLOPS = flops / (1.0e+9 * time);
- 
+
+    /* 
     if (test == 'T') {
-      ValueType *c_baseline = (ValueType *)calloc(ncols, sizeof(ValueType));
+      ValueType *base_values;
+      IndexType *base_row_ptr, *base_col_idx;
+      int base_nrows, base_ncols, base_nnz;
+      
+      ValueType *base_c = (ValueType *)calloc(base_ncols, sizeof(ValueType));
+
       #ifdef LIB_PETSC
       const PetscInt *row_ptrs, *col_idx;
       const PetscScalar *values;
@@ -189,28 +194,56 @@ int main(int argc, char* argv[]) {
       PetscBool done;
       MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
       MatSeqAIJGetArrayRead(A, &values);
-      const PetscScalar *b_array, *c_array;
+      
+      const PetscScalar *c_array, *b_array;
       VecGetArrayRead(b, &b_array); 
       VecGetArrayRead(c, &c_array); 
-      spmv_baseline(row_ptrs, col_idx, values, ncols, b_array, c_baseline);
-      err = gemm_validation(ncols, c_baseline, c_array);
-      #else
-      spmv_baseline (A->get_const_row_ptrs(), A->get_const_col_idxs(),
-                     A->get_const_values(), A->get_size()[0],
-                     b->get_const_values(), c_baseline);
-      err = gemm_validation(A->get_size()[0], c_baseline, c_ginkgo->get_const_values());
-      #endif
-      free(c_baseline);	      
-    } else err = 0.0; 
 
-      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e | ", COLOR_BOLDYELLOW, matrix_name, COLOR_RESET, mnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
-      fprintf(fd_logs, "%s;%zu;%d;%d;%.2f;%.2e\n", matrix_name, mnz, nrows, ncols, time, GFLOPS);
+      #else
+      //const ValueType   *values = A->get_const_values();
+      const ValueType  *c_array = c_ginkgo->get_const_values();
+      const ValueType  *b_array = b->get_const_values();
+      #endif
+    
+      //Evaluate Baseline
+      basetime  = 0.0; 
+      nreps = 0; 
+      t1 = dclock();
+      while (basetime <= tmin) {
+        spmv_baseline(base_row_ptr, base_col_idx, base_values, base_ncols, b_array, base_c);
+        nreps++;
+        t2 = dclock();
+        basetime = (t2 > t1 ? t2 - t1: 0.0);
+      }
+
+      basetime   = basetime / nreps;
+      baseGFLOPS = flops / (1.0e+9 * basetime);
+      err = gemm_validation(base_ncols, base_c, c_array);
+      free(base_c);
+        
+      //-------------------------------------------------------------------------
+      //Alignment issue?
+      //-------------------------------------------------------------------------
+      //Remove this for a normal execution
+      //free(values_m);
+      //free(row_ptrs_m);
+      //free(col_idx_m);
+      //-------------------------------------------------------------------------
+
+    } else*/ 
+    err = 0.0; 
+    
+    std::filesystem::path pathObj(matrix_name);
+    std::string pname = pathObj.filename().string();
+
+      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, mnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
 
       if (test == 'T')
         if (err < err_limit) printf("   %sOK%s   |\n", COLOR_BOLDGREEN,  COLOR_RESET);
         else                 printf("   %sERR%s  |\n", COLOR_BOLDRED,    COLOR_RESET);
       else                   printf("   %s--%s   |\n", COLOR_BOLDYELLOW, COLOR_RESET);
 
+      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), mnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
 
       #ifdef LIB_PETSC
       MatDestroy(&A);
@@ -221,9 +254,11 @@ int main(int argc, char* argv[]) {
       b.reset();
       c_ginkgo.reset();
       #endif
+      
+      
     }
 
-    printf("+------------------------------------------------------------------------------------------------------------\n\n");
+    printf("+-------------------------------------------------------------+-----------------------------------+--------+\n");
 
     #ifdef LIB_PETSC
     PetscFinalize();
