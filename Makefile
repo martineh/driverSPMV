@@ -1,6 +1,6 @@
 include Makefile.inc
 
-CXX        = g++
+CXX        = g++-8
 OPTFLAGS   = -std=c++17 -O3 -D$(LIB_SELECT)
 BIN        = build/spmv_driver  
 COMMON_OBJ = src/utils.cpp src/driver_spmv.cpp
@@ -21,6 +21,6 @@ endif
 all: $(BIN)
 
 $(BIN): $(OBJ)
-	$(CXX) $(OPTFLAGS) $(INCLUDE) $^ -o $@ $(LIB)
+	$(CXX) $(OPTFLAGS) $(INCLUDE) $^ -o $@ $(LIB) -lstdc++fs
 clean:
 	rm build/*

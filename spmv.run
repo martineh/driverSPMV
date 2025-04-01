@@ -1,5 +1,7 @@
 #!/bin/bash
 
+BIN=/bin
+
 #------------------------------------------------------------
 # Minimum Time
 #------------------------------------------------------------
@@ -15,7 +17,7 @@ TEST=F
 #------------------------------------------------------------
 # Matrix Path
 #------------------------------------------------------------
-PREFIX="/media/hmartinez/Nuevo vol/sparse_matrix/MM/"
+PREFIX="/mnt/sparseUSB/sparse_matrix/MM/"
 PATH="general_matrix.txt"
 #------------------------------------------------------------
 
@@ -25,16 +27,16 @@ PATH="general_matrix.txt"
 LOGS="logs"
 #------------------------------------------------------------
 
-/usr/bin/mkdir -p $LOGS
+$BIN/mkdir -p $LOGS
 
-id=$(/usr/bin/ls $LOGS | /usr/bin/wc -l)
+id=$($BIN/ls $LOGS | /usr/$BIN/wc -l)
 LOGS=$LOGS"/log_"$id".csv"
 
-line=$(/usr/bin/cat Makefile.inc | /usr/bin/grep "LIB_SELECT" | /usr/bin/grep GINKGO | /usr/bin/wc -l)
+line=$($BIN/cat Makefile.inc | $BIN/grep "LIB_SELECT" | $BIN/grep GINKGO | /usr/$BIN/wc -l)
 
 if [ $line -eq 1 ] ; then 
   export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH
 fi
 
-/usr/bin/taskset -c 0 ./build/spmv_driver $TMIN $TEST $PATH $LOGS "$PREFIX"
+/usr/$BIN/taskset -c 0 ./build/spmv_driver $TMIN $TEST $PATH $LOGS "$PREFIX"
 
