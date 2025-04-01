@@ -15,7 +15,8 @@ TEST=F
 #------------------------------------------------------------
 # Matrix Path
 #------------------------------------------------------------
-PATH="matrix"
+PREFIX="/media/hmartinez/Nuevo vol/sparse_matrix/MM/"
+PATH="general_matrix.txt"
 #------------------------------------------------------------
 
 #------------------------------------------------------------
@@ -35,5 +36,5 @@ if [ $line -eq 1 ] ; then
   export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH
 fi
 
-/usr/bin/taskset -c 0 ./build/spmv_driver $TMIN $TEST $PATH $LOGS
+/usr/bin/taskset -c 0 ./build/spmv_driver $TMIN $TEST $PATH $LOGS "$PREFIX"
 
