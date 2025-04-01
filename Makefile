@@ -6,8 +6,8 @@ BIN        = build/spmv_driver
 COMMON_OBJ = src/utils.cpp src/driver_spmv.cpp
 
 ifeq ($(LIB_SELECT), LIB_GINKGO)
-  #openmpi need it? -lmpi_cxx
-  LIB     = -L/lib/x86_64-linux-gnu/ -L$(GINKGO_DIR)/build/lib -lginkgo -lginkgo_omp -lginkgo_cuda -lginkgo_reference -lginkgo_hip -lginkgo_dpcpp -lginkgo_device -lmpi -lmpi_cxx
+  #openmpi need it? -lmpi -lmpi_cxx
+  LIB     = -L/lib/x86_64-linux-gnu/ -L$(GINKGO_DIR)/build/lib -lginkgo -lginkgo_omp -lginkgo_cuda -lginkgo_reference -lginkgo_hip -lginkgo_dpcpp -lginkgo_device
   INCLUDE = -I$(GINKGO_DIR)/include/ -I$(GINKGO_DIR)/build/include/ -I/usr/lib/x86_64-linux-gnu/openmpi/include/
   OBJ     = $(COMMON_OBJ)
 else

@@ -12,5 +12,5 @@ LIB_SELECT=LIB_GINKGO
 #| LIBRARIES PATHS                                       |
 #---------------------------------------------------------
 #PETSc must be configure with PETSC_DIR and PETSC_ARCH.
-GINKGO_DIR = /home/hmartinez/software/ginkgo/
+GINKGO_DIR = /home/martineh/Software/ginkgo/
 #---------------------------------------------------------
