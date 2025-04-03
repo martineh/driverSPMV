@@ -11,7 +11,7 @@ ifeq ($(LIB_SELECT), LIB_GINKGO)
   INCLUDE = -I$(GINKGO_DIR)/include/ -I$(GINKGO_DIR)/build/include/ -I/usr/lib/x86_64-linux-gnu/openmpi/include/
   OBJ     = $(COMMON_OBJ)
 else
-  LIB     = -L$(PETSC_DIR)/$(PETSC_ARCH)/lib -lpetsc -lmpi -lmpi_cxx
+  LIB     = -L$(PETSC_DIR)/$(PETSC_ARCH)/lib -lpetsc -lmpi
   INCLUDE = -I$(PETSC_DIR)/src/mat/tests/ -I$(PETSC_DIR)/$(PETSC_ARCH)/include -I$(PETSC_DIR)/include
   OBJ     = $(PETSC_DIR)/src/mat/tests/mmloader.c $(PETSC_DIR)/src/mat/tests/mmio.c $(COMMON_OBJ)
 endif

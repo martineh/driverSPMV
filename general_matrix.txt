@@ -48,13 +48,3 @@ Sandia/ASIC_680k/ASIC_680k.mtx
 Schenk_IBMSDS/matrix-new_3/matrix-new_3.mtx
 Schenk_IBMSDS/matrix_9/matrix_9.mtx
 Schenk_ISEI/barrier2-1/barrier2-1.mtx
-Schenk_ISEI/ohne2/ohne2.mtx
-Schenk_ISEI/para-4/para-4.mtx
-VLSI/dgreen/dgreen.mtx
-VLSI/imagesensor/imagesensor.mtx
-VLSI/nv2/nv2.mtx
-VLSI/power9/power9.mtx
-VLSI/radiation/radiation.mtx
-VLSI/ss/ss.mtx
-VLSI/ss1/ss1.mtx
-VLSI/test1/test1.mtx

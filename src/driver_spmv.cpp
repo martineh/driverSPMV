@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
   double t1, t2, flops, baseGFLOPS, GFLOPS, err;
   char   *directory, *logs, *prefix;
   DIR    *dir;
-  size_t mnz;
+  size_t nnz;
   struct dirent *entry;
   double err_limit = 1.0e-10;
   int    nrows, ncols;
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
     MatGetInfo(A, MAT_GLOBAL_SUM, &info);
-    mnz = (PetscInt)info.nz_allocated; // Number of nonzeros
+    nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
 
     VecCreate(PETSC_COMM_WORLD, &b);
     VecSetSizes(b, PETSC_DECIDE, ncols);
@@ -154,7 +154,7 @@ int main(int argc, char* argv[]) {
 
     generate_vector_double(b->get_size()[0], b->get_values());
     std::fill_n(c_ginkgo->get_values(), c_ginkgo->get_size()[0], 0.0);
-    mnz = A->get_num_stored_elements();
+    nnz = A->get_num_stored_elements();
     nrows = A->get_size()[0]; 
     ncols = A->get_size()[1];
     #endif  
@@ -176,7 +176,7 @@ int main(int argc, char* argv[]) {
     //----------------------------------------------------------------------------
 
     time   = time / nreps;
-    flops  = mnz * 2.0;
+    flops  = nnz * 2.0;
     GFLOPS = flops / (1.0e+9 * time);
 
     /* 
@@ -236,14 +236,14 @@ int main(int argc, char* argv[]) {
     std::filesystem::path pathObj(matrix_name);
     std::string pname = pathObj.filename().string();
 
-      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, mnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
+      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, nnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
 
       if (test == 'T')
         if (err < err_limit) printf("   %sOK%s   |\n", COLOR_BOLDGREEN,  COLOR_RESET);
         else                 printf("   %sERR%s  |\n", COLOR_BOLDRED,    COLOR_RESET);
       else                   printf("   %s--%s   |\n", COLOR_BOLDYELLOW, COLOR_RESET);
 
-      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), mnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
+      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), nnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
 
       #ifdef LIB_PETSC
       MatDestroy(&A);
