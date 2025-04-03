@@ -60,11 +60,12 @@ int main(int argc, char* argv[]) {
   int    nreps = 0;
   double time  = 0.0;
   double basetime  = 0.0;
+  int    nonzerorowcnt = 0;
   char   test;
   double t1, t2, flops, baseGFLOPS, GFLOPS, err;
   char   *directory, *logs, *prefix;
   DIR    *dir;
-  size_t mnz;
+  size_t nnz;
   struct dirent *entry;
   double err_limit = 1.0e-10;
   int    nrows, ncols;
@@ -111,7 +112,7 @@ int main(int argc, char* argv[]) {
     //if (entry->d_type != DT_REG) continue; //Only regular files
     if (matrix_name[0] == '%') continue;
     sprintf(matrix_path, "%s/%s", prefix, matrix_name);
-      
+    nonzerorowcnt = 0;
     //----------------------------------------------------------------------------
     //SPMV PETSc
     //----------------------------------------------------------------------------
@@ -121,12 +122,13 @@ int main(int argc, char* argv[]) {
     MatInfo info;
     PetscViewer viewer;
 
-    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
+    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_TRUE));
 
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
     MatGetInfo(A, MAT_GLOBAL_SUM, &info);
-    mnz = (PetscInt)info.nz_allocated; // Number of nonzeros
+    nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
+    nnz = (PetscInt)info.nz_used; // Number of nonzeros
 
     VecCreate(PETSC_COMM_WORLD, &b);
     VecSetSizes(b, PETSC_DECIDE, ncols);
@@ -137,6 +139,18 @@ int main(int argc, char* argv[]) {
     VecGetArray(b, &b_set);
     generate_vector_double(ncols, b_set);
     VecSet(c, 0.0);
+
+    //Mat_SeqAIJ *a = (Mat_SeqAIJ *)A->data;
+    //flops         = 2.0 * a->nz - a->nonzerorowcnt;
+
+    const PetscInt *row_ptrs, *col_idx;
+    PetscInt m, rownz; 
+    PetscBool done;
+    MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
+    for (int i = 0; i < m; i++)  {
+      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    }
+
     #else
     auto ref_exec = gko::ReferenceExecutor::create();
     // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
@@ -154,9 +168,13 @@ int main(int argc, char* argv[]) {
 
     generate_vector_double(b->get_size()[0], b->get_values());
     std::fill_n(c_ginkgo->get_values(), c_ginkgo->get_size()[0], 0.0);
-    mnz = A->get_num_stored_elements();
+    nnz = A->get_num_stored_elements();
     nrows = A->get_size()[0]; 
     ncols = A->get_size()[1];
+    const auto& row_ptrs = A->get_row_ptrs();
+    for (int i = 0; i < nrows; i++)  {
+      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    }
     #endif  
 
     time  = 0.0; 
@@ -176,7 +194,7 @@ int main(int argc, char* argv[]) {
     //----------------------------------------------------------------------------
 
     time   = time / nreps;
-    flops  = mnz * 2.0;
+    flops = 2.0 * nnz - nonzerorowcnt;
     GFLOPS = flops / (1.0e+9 * time);
 
     /* 
@@ -236,14 +254,14 @@ int main(int argc, char* argv[]) {
     std::filesystem::path pathObj(matrix_name);
     std::string pname = pathObj.filename().string();
 
-      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, mnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
+      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, nnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
 
       if (test == 'T')
         if (err < err_limit) printf("   %sOK%s   |\n", COLOR_BOLDGREEN,  COLOR_RESET);
         else                 printf("   %sERR%s  |\n", COLOR_BOLDRED,    COLOR_RESET);
       else                   printf("   %s--%s   |\n", COLOR_BOLDYELLOW, COLOR_RESET);
 
-      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), mnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
+      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), nnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
 
       #ifdef LIB_PETSC
       MatDestroy(&A);

@@ -3,7 +3,7 @@
 #------------------------------------------------------------
 # Minimum Time
 #------------------------------------------------------------
-TMIN=2.0
+TMIN=4.0
 #------------------------------------------------------------
 
 #------------------------------------------------------------
@@ -15,10 +15,11 @@ TEST=F
 #------------------------------------------------------------
 # Matrix Path
 #------------------------------------------------------------
-PREFIX="/media/hmartinez/Nuevo vol/sparse_matrix/MM/"
-#PREFIX="/home/hmartinez/workspace/driverSPMV.backup/matrix/"
+#PREFIX="/media/hmartinez/Nuevo vol/sparse_matrix/MM/"
+PREFIX="/home/hmartinez/workspace/driverSPMV.backup/"
 PATH="general_matrix.txt"
-#PATH="symmetric_matrix.txt"
+PATH="symmetric_matrix.txt"
+PATH="debug.txt"
 #------------------------------------------------------------
 
 #------------------------------------------------------------
