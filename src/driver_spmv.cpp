@@ -1,12 +1,9 @@
 #include "utils.hpp"
 #include "colors.hpp"
 
-#ifdef LIB_PETSC
-  #include "petscmat.h"
-  #include "mmloader.h"
-#else
-  #include "ginkgo/ginkgo.hpp"
-#endif
+#include "petscmat.h"
+#include "mmloader.h"
+#include "ginkgo/ginkgo.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -210,6 +207,7 @@ int main(int argc, char* argv[]) {
   double tmin  = 0.0;
   int    nreps = 0;
   double time  = 0.0;
+  double time_ginkgo, time_petsc, GFLOPS_ginkgo, GFLOPS_petsc;
   double basetime  = 0.0;
   int    nonzerorowcnt = 0;
   char   test;
@@ -259,106 +257,139 @@ int main(int argc, char* argv[]) {
   printf("+-------------------------------------------------------------+-----------------------------------+--------+\n");
 
   while (matrix_list.getline(matrix_name, MAX_LINE)) {
-    //while ((entry = readdir(dir)) != NULL) {
-    //if (entry->d_type != DT_REG) continue; //Only regular files
     if (matrix_name[0] == '%') continue;
+
     sprintf(matrix_path, "%s/%s", prefix, matrix_name);
     nonzerorowcnt = 0;
+
     //----------------------------------------------------------------------------
+    //Reading CSR with Ginkgo
+    //----------------------------------------------------------------------------
+    auto ref_exec = gko::ReferenceExecutor::create();
+    // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
+
+    auto A_ginkgo = gko::read<gko::matrix::Csr<ValueType, IndexType>>(
+        std::ifstream(matrix_path), ref_exec);
+
+    auto b_ginkgo = gko::matrix::Dense<ValueType>::create(
+        ref_exec, gko::dim<2>{A_ginkgo->get_size()[1], 1});
+
+    auto c_ginkgo = gko::matrix::Dense<ValueType>::create(
+        ref_exec, gko::dim<2>{A_ginkgo->get_size()[0], 1});
+
+    generate_vector_double(b_ginkgo->get_size()[0], b_ginkgo->get_values());
+
+    std::fill_n(c_ginkgo->get_values(), c_ginkgo->get_size()[0], 0.0);
+
+    nrows = A_ginkgo->get_size()[0]; 
+    ncols = A_ginkgo->get_size()[1];
+    nnz   = A_ginkgo->get_num_stored_elements();
+    
+    const auto* row_ptrs = A_ginkgo->get_const_row_ptrs();
+    const auto* col_idxs = A_ginkgo->get_const_col_idxs();
+    const auto* values   = A_ginkgo->get_const_values();
+    //----------------------------------------------------------------------------
+    //----------------------------------------------------------------------------
+   
+
     //SPMV PETSc
-    //----------------------------------------------------------------------------
-    #ifdef LIB_PETSC
+    for (int i = 0; i < nrows; i++)  {
+      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    }
+
     PetscInitialize(&argc, &argv, NULL, NULL);
     MatInfo info;
-    PetscViewer viewer;
-    Mat A;
+    Mat A_petsc;
+    Vec b_petsc, c_petsc;
+    PetscScalar *b_set;
 
     //CSRMatrix csr = readMTXToCSR(matrix_path);
     //printf("Read csr done\n");
     //Mat A = createPETScMatrixFromCSR(csr);
-    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
+    //PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
 
-    Vec b, c;
-    MatGetSize(A, &nrows, &ncols);
-    MatGetInfo(A, MAT_GLOBAL_SUM, &info);
+    //MatGetSize(A_petsc, &nrows, &ncols);
+    //MatGetInfo(A_petsc, MAT_GLOBAL_SUM, &info);
 
+    //nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
+    //nnz = (PetscInt)info.nz_used; // Number of nonzeros
 
-    nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
-    nnz = (PetscInt)info.nz_used; // Number of nonzeros
+    MatCreate(PETSC_COMM_SELF, &A_petsc);
+    MatSetSizes(A_petsc, PETSC_DECIDE, PETSC_DECIDE, nrows, ncols);
+    MatSetType(A_petsc, MATSEQAIJ);
 
-    VecCreate(PETSC_COMM_WORLD, &b);
-    VecSetSizes(b, PETSC_DECIDE, ncols);
-    VecSetFromOptions(b);
-    VecDuplicate(b, &c);
+    VecCreate(PETSC_COMM_WORLD, &b_petsc);
+    VecSetSizes(b_petsc, PETSC_DECIDE, ncols);
+    VecSetFromOptions(b_petsc);
+    VecDuplicate(b_petsc, &c_petsc);
+    VecSet(c_petsc, 0.0);
 
-    PetscScalar *b_set;
-    VecGetArray(b, &b_set);
-    generate_vector_double(ncols, b_set);
-    VecSet(c, 0.0);
+    VecGetArray(b_petsc, &b_set);
+    for (int i = 0; i < ncols; i++) b_set[i] = b_ginkgo->get_values()[i];
 
-    const PetscInt *row_ptrs, *col_idx;
-    PetscInt m, rownz; 
-    PetscBool done;
-    MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
-    for (int i = 0; i < m; i++)  {
-      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    // Pre-asignación de memoria
+    std::vector<PetscInt> nnz_per_row(nrows);
+    for (PetscInt i = 0; i < nrows; ++i) {
+        nnz_per_row[i] = row_ptrs[i+1] - row_ptrs[i];
     }
-    nrows = m;
-    #else
-    auto ref_exec = gko::ReferenceExecutor::create();
-    // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
+    MatSeqAIJSetPreallocation(A_petsc, 0, nnz_per_row.data());
 
-    auto A = gko::read<gko::matrix::Csr<ValueType, IndexType>>(
-        std::ifstream(matrix_path), ref_exec
-    );
-
-    auto b = gko::matrix::Dense<ValueType>::create(
-        ref_exec, gko::dim<2>{A->get_size()[1], 1}
-    );
-    auto c_ginkgo = gko::matrix::Dense<ValueType>::create(
-        ref_exec, gko::dim<2>{A->get_size()[0], 1}
-    );
-
-    generate_vector_double(b->get_size()[0], b->get_values());
-    std::fill_n(c_ginkgo->get_values(), c_ginkgo->get_size()[0], 0.0);
-    nnz = A->get_num_stored_elements();
-    nrows = A->get_size()[0]; 
-    ncols = A->get_size()[1];
-    const auto& row_ptrs = A->get_row_ptrs();
-    for (int i = 0; i < nrows; i++)  {
-      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    // Insertar valores
+    for (PetscInt i = 0; i < nrows; ++i) {
+        PetscInt ncols = row_ptrs[i+1] - row_ptrs[i];
+        if (ncols > 0) {
+            MatSetValues(A_petsc,
+                        1, &i,
+                        ncols,
+                        const_cast<PetscInt*>(col_idxs + row_ptrs[i]),
+                        const_cast<PetscScalar*>(values + row_ptrs[i]),
+                        INSERT_VALUES);
+        }
     }
-    #endif  
 
-    time  = 0.0; 
+    //const PetscInt *row_ptrs, *col_idx;
+    //PetscInt m, rownz; 
+    //PetscBool done;
+    //MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
+    //for (int i = 0; i < m; i++)  {
+      //if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    //}
+    //nrows = m;
+
+    flops = 2.0 * nnz - nonzerorowcnt;
+
+    time = 0.0; 
     nreps = 0; 
-    t1 = dclock();
+    t1    = dclock();
     while (time <= tmin) {
-      #ifdef LIB_PETSC
-      MatMult(A, b, c); //SPMV Petsc
-      #else
-      A->apply(b, c_ginkgo); //SPMV Ginkgo
-      #endif
+      A_ginkgo->apply(b_ginkgo, c_ginkgo); //SPMV Ginkgo
       nreps++;
       t2 = dclock();
       time = (t2 > t1 ? t2 - t1: 0.0);
     }
-    //----------------------------------------------------------------------------
-    //----------------------------------------------------------------------------
+    time_ginkgo   = time / nreps;
+    GFLOPS_ginkgo = flops / (1.0e+9 * time_ginkgo);
 
-    time   = time / nreps;
-    flops = 2.0 * nnz - nonzerorowcnt;
-    GFLOPS = flops / (1.0e+9 * time);
 
-    //const ValueType  *c_array = c_ginkgo->get_const_values(); //Ginkgo
+    time  = 0.0; 
+    nreps = 0; 
+    t1    = dclock();
+    while (time <= tmin) {
+      MatMult(A_petsc, b_petsc, c_petsc); //SPMV Petsc
+      nreps++;
+      t2 = dclock();
+      time = (t2 > t1 ? t2 - t1: 0.0);
+    }
+    time_petsc   = time / nreps;
+    GFLOPS_petsc = flops / (1.0e+9 * time_petsc);
     
-    #ifdef LIB_PETSC
-    const PetscScalar *c_array;
-    VecGetArrayRead(c, &c_array); 
-    #else
-    const ValueType *c_array = c_ginkgo->get_const_values();	    
-    #endif
-    for (int i = 0; i < 32; i++) printf("%.8f, \n", c_array[i]);
+    
+    const PetscScalar *c_array_petsc;
+    VecGetArrayRead(c_petsc, &c_array_petsc); 
+    const ValueType *c_array_ginkgo = c_ginkgo->get_const_values();	    
+    for (int i = 0; i < 32; i++) printf("%.8f, %.8f\n", c_array_ginkgo[i], c_array_petsc[i]);
+
+    exit(-1);
 
     /* 
     if (test == 'T') {
@@ -425,15 +456,13 @@ int main(int argc, char* argv[]) {
 
       fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), nnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
 
-      #ifdef LIB_PETSC
-      MatDestroy(&A);
-      VecDestroy(&b);
-      VecDestroy(&c);
-      #else
-      A.reset();
-      b.reset();
+      MatDestroy(&A_petsc);
+      VecDestroy(&b_petsc);
+      VecDestroy(&c_petsc);
+      
+      A_ginkgo.reset();
+      b_ginkgo.reset();
       c_ginkgo.reset();
-      #endif
       
       
     }
