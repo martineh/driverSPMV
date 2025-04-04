@@ -16,6 +16,12 @@
 #include <cmath>
 #include <dirent.h>
 
+#include <string>
+#include <sstream>
+#include <algorithm>
+
+using namespace std;
+
 #define MAX_LINE 1024
 
 using ValueType = double;  // FP64
@@ -51,6 +57,151 @@ double gemm_validation(size_t m, const ValueType *Vref, const ValueType *V) {
   return error;
 }
 
+
+
+struct CSRMatrix {
+    vector<double> values;     // Valores no nulos
+    vector<int> columns;       // Índices de columna
+    vector<int> row_ptr;       // Punteros de fila
+    int rows, cols, nnz;       // Filas, columnas, elementos no nulos
+
+    // Constructor
+    CSRMatrix(int r, int c, int n) : rows(r), cols(c), nnz(n) {
+        row_ptr.resize(rows + 1, 0);
+   }
+       // Liberar memoria
+    void clear() {
+        values.clear();
+        columns.clear();
+        row_ptr.clear();
+    }
+};
+
+
+// Función para leer archivo .mtx y construir CSR
+CSRMatrix readMTXToCSR(char *filename) {
+    ifstream file(filename);
+    if (!file.is_open()) {
+        cerr << "Error al abrir el archivo: " << filename << endl;
+        exit(1);
+    }
+
+    string line;
+    // Leer encabezado
+    while (getline(file, line)) {
+        if (line[0] != '%') break;
+    }
+
+    // Leer dimensiones
+    int rows, cols, nnz;
+    istringstream iss(line);
+    iss >> rows >> cols >> nnz;
+    printf("Read rows=%d, cols=%d, nnz=%d\n", rows, cols, nnz);
+
+    // Crear matriz temporal para almacenar todos los elementos (incluyendo simétricos)
+    vector<vector<double>> temp_matrix(rows, vector<double>(cols, 0.0));
+    int actual_nnz = 0;
+
+    printf("Reading data\n");
+    // Leer datos
+    for (int i = 0; i < nnz; ++i) {
+        getline(file, line);
+        if (line.empty()) continue;
+
+        int row, col;
+        double value;
+        istringstream iss(line);
+        iss >> row >> col >> value;
+
+        // Convertir a índices basados en 0
+        row--;
+        col--;
+
+        // Almacenar elemento
+        if (temp_matrix[row][col] == 0) actual_nnz++;
+        temp_matrix[row][col] = value;
+
+        // Si es simétrica, almacenar también el elemento transpuesto
+        if (row != col) {
+            if (temp_matrix[col][row] == 0) actual_nnz++;
+            temp_matrix[col][row] = value;
+        }
+    }
+
+    file.close();
+    printf("Read ok\n");
+    // Construir CSR
+    CSRMatrix csr(rows, cols, actual_nnz);
+    csr.row_ptr[0] = 0;
+
+    int count = 0;
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            if (temp_matrix[i][j] != 0) {
+                csr.values.push_back(temp_matrix[i][j]);
+                csr.columns.push_back(j);
+                count++;
+            }
+        }
+        csr.row_ptr[i+1] = count;
+    }
+
+    return csr;
+}
+
+// Función para crear matriz PETSc MATSEQAIJ a partir de CSR
+Mat createPETScMatrixFromCSR(CSRMatrix& csr) {
+    Mat A;
+    MatCreate(PETSC_COMM_SELF, &A);
+    MatSetSizes(A, PETSC_DECIDE, PETSC_DECIDE, csr.rows, csr.cols);
+    MatSetType(A, MATSEQAIJ);
+    
+    // Pre-asignación de memoria
+    vector<PetscInt> nnz_per_row(csr.rows);
+    for (int i = 0; i < csr.rows; ++i) {
+        nnz_per_row[i] = csr.row_ptr[i+1] - csr.row_ptr[i];
+    }
+    MatSeqAIJSetPreallocation(A, 0, nnz_per_row.data());
+    
+    // Insertar valores
+    for (int i = 0; i < csr.rows; ++i) {
+        int start = csr.row_ptr[i];
+        int end = csr.row_ptr[i+1];
+        int ncols = end - start;
+        
+        if (ncols > 0) {
+            MatSetValues(A, 1, &i, ncols, 
+                        csr.columns.data() + start, 
+                        csr.values.data() + start, 
+                        INSERT_VALUES);
+        }
+    }
+    
+    // Ensamblar matriz
+    MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY);
+    MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY);
+    
+    // Liberar memoria de CSR
+    csr.clear();
+    
+    return A;
+}
+
+
+// Función para imprimir la matriz CSR
+void printCSR(const CSRMatrix& csr) {
+    cout << "Valores: ";
+    for (double val : csr.values) cout << val << " ";
+    cout << endl;
+
+    cout << "Columnas: ";
+    for (int col : csr.columns) cout << col << " ";
+    cout << endl;
+
+    cout << "Punteros de fila: ";
+    for (int ptr : csr.row_ptr) cout << ptr << " ";
+    cout << endl;
+}
 
 
 int main(int argc, char* argv[]) {
@@ -118,15 +269,20 @@ int main(int argc, char* argv[]) {
     //----------------------------------------------------------------------------
     #ifdef LIB_PETSC
     PetscInitialize(&argc, &argv, NULL, NULL);
-    Mat A;
     MatInfo info;
     PetscViewer viewer;
+    Mat A;
 
-    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_TRUE));
+    //CSRMatrix csr = readMTXToCSR(matrix_path);
+    //printf("Read csr done\n");
+    //Mat A = createPETScMatrixFromCSR(csr);
+    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
 
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
     MatGetInfo(A, MAT_GLOBAL_SUM, &info);
+
+
     nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
     nnz = (PetscInt)info.nz_used; // Number of nonzeros
 
@@ -140,9 +296,6 @@ int main(int argc, char* argv[]) {
     generate_vector_double(ncols, b_set);
     VecSet(c, 0.0);
 
-    //Mat_SeqAIJ *a = (Mat_SeqAIJ *)A->data;
-    //flops         = 2.0 * a->nz - a->nonzerorowcnt;
-
     const PetscInt *row_ptrs, *col_idx;
     PetscInt m, rownz; 
     PetscBool done;
@@ -150,7 +303,7 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < m; i++)  {
       if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
     }
-
+    nrows = m;
     #else
     auto ref_exec = gko::ReferenceExecutor::create();
     // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
@@ -197,6 +350,16 @@ int main(int argc, char* argv[]) {
     flops = 2.0 * nnz - nonzerorowcnt;
     GFLOPS = flops / (1.0e+9 * time);
 
+    //const ValueType  *c_array = c_ginkgo->get_const_values(); //Ginkgo
+    
+    #ifdef LIB_PETSC
+    const PetscScalar *c_array;
+    VecGetArrayRead(c, &c_array); 
+    #else
+    const ValueType *c_array = c_ginkgo->get_const_values();	    
+    #endif
+    for (int i = 0; i < 32; i++) printf("%.8f, \n", c_array[i]);
+
     /* 
     if (test == 'T') {
       ValueType *base_values;
@@ -219,7 +382,6 @@ int main(int argc, char* argv[]) {
 
       #else
       //const ValueType   *values = A->get_const_values();
-      const ValueType  *c_array = c_ginkgo->get_const_values();
       const ValueType  *b_array = b->get_const_values();
       #endif
     
