@@ -60,6 +60,7 @@ int main(int argc, char* argv[]) {
   int    nreps = 0;
   double time  = 0.0;
   double basetime  = 0.0;
+  int    nonzerorowcnt = 0;
   char   test;
   double t1, t2, flops, baseGFLOPS, GFLOPS, err;
   char   *directory, *logs, *prefix;
@@ -69,7 +70,7 @@ int main(int argc, char* argv[]) {
   double err_limit = 1.0e-10;
   int    nrows, ncols;
   FILE   *fd_logs;
-
+ 
   tmin = atof(argv[1]); 
   test = argv[2][0];
   std::ifstream matrix_list(argv[3]);
@@ -111,22 +112,25 @@ int main(int argc, char* argv[]) {
     //if (entry->d_type != DT_REG) continue; //Only regular files
     if (matrix_name[0] == '%') continue;
     sprintf(matrix_path, "%s/%s", prefix, matrix_name);
-      
+    nonzerorowcnt = 0;
     //----------------------------------------------------------------------------
     //SPMV PETSc
     //----------------------------------------------------------------------------
     #ifdef LIB_PETSC
+    PetscBool PETSC_config = PETSC_TRUE;
+
     PetscInitialize(&argc, &argv, NULL, NULL);
     Mat A;
     MatInfo info;
     PetscViewer viewer;
 
-    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_TRUE));
+    PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_config));
 
     Vec b, c;
     MatGetSize(A, &nrows, &ncols);
     MatGetInfo(A, MAT_GLOBAL_SUM, &info);
     nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
+    nnz = (PetscInt)info.nz_used; // Number of nonzeros
 
     VecCreate(PETSC_COMM_WORLD, &b);
     VecSetSizes(b, PETSC_DECIDE, ncols);
@@ -137,6 +141,17 @@ int main(int argc, char* argv[]) {
     VecGetArray(b, &b_set);
     generate_vector_double(ncols, b_set);
     VecSet(c, 0.0);
+
+    const PetscInt *row_ptrs, *col_idx;
+    PetscInt m, rownz; 
+    PetscBool done;
+    MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
+    for (int i = 0; i < m; i++)
+      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    
+    if (PETSC_config = PETSC_TRUE) flops = 2.0 * nnz - nonzerorowcnt;
+    else                           flops = 2.0 * (2.0 * nnz - nonzerorowcnt) - nonzerorowcnt;
+
     #else
     auto ref_exec = gko::ReferenceExecutor::create();
     // For GPU: auto exec = gko::CudaExecutor::create(0, ref_exec);
@@ -157,6 +172,11 @@ int main(int argc, char* argv[]) {
     nnz = A->get_num_stored_elements();
     nrows = A->get_size()[0]; 
     ncols = A->get_size()[1];
+    const auto& row_ptrs = A->get_row_ptrs();
+    for (int i = 0; i < nrows; i++)  {
+      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
+    }
+    flops = 2.0 * nnz - nonzerorowcnt;
     #endif  
 
     time  = 0.0; 
@@ -176,7 +196,6 @@ int main(int argc, char* argv[]) {
     //----------------------------------------------------------------------------
 
     time   = time / nreps;
-    flops  = nnz * 2.0;
     GFLOPS = flops / (1.0e+9 * time);
 
     /* 
