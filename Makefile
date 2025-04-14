@@ -1,6 +1,6 @@
 include Makefile.inc
 
-CXX        = g++
+CXX        = g++-8
 OPTFLAGS   = -std=c++17 -O3 -D$(LIB_SELECT) -DLIB_GINKGO -DLIB_PETSC
 BIN        = build/spmv_driver  
 COMMON_OBJ = src/utils.cpp src/driver_spmv.cpp
@@ -12,7 +12,7 @@ COMMON_OBJ = src/utils.cpp src/driver_spmv.cpp
 #  OBJ     = $(COMMON_OBJ)
 #else
  #-L/lib/x86_64-linux-gnu/ , -I/usr/lib/x86_64-linux-gnu/openmpi/include/
-  LIB     = -L$(PETSC_DIR)/$(PETSC_ARCH)/lib -L$(GINKGO_DIR)/build/lib -lpetsc -lginkgo -lginkgo_omp -lginkgo_cuda -lginkgo_reference -lginkgo_hip -lginkgo_dpcpp -lginkgo_device -lmpi -lmpi_cxx
+  LIB     = -L$(PETSC_DIR)/$(PETSC_ARCH)/lib -L$(GINKGO_DIR)/build/lib -lpetsc -lginkgo -lginkgo_omp -lginkgo_cuda -lginkgo_reference -lginkgo_hip -lginkgo_dpcpp -lginkgo_device -lmpi
   INCLUDE = -I$(PETSC_DIR)/src/mat/tests/ -I$(PETSC_DIR)/$(PETSC_ARCH)/include -I$(PETSC_DIR)/include -I$(GINKGO_DIR)/include/ -I$(GINKGO_DIR)/build/include/
   OBJ     = $(PETSC_DIR)/src/mat/tests/mmloader.c $(PETSC_DIR)/src/mat/tests/mmio.c $(COMMON_OBJ)
 #endif

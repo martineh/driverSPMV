@@ -75,132 +75,6 @@ struct CSRMatrix {
 };
 
 
-// Función para leer archivo .mtx y construir CSR
-CSRMatrix readMTXToCSR(char *filename) {
-    ifstream file(filename);
-    if (!file.is_open()) {
-        cerr << "Error al abrir el archivo: " << filename << endl;
-        exit(1);
-    }
-
-    string line;
-    // Leer encabezado
-    while (getline(file, line)) {
-        if (line[0] != '%') break;
-    }
-
-    // Leer dimensiones
-    int rows, cols, nnz;
-    istringstream iss(line);
-    iss >> rows >> cols >> nnz;
-    printf("Read rows=%d, cols=%d, nnz=%d\n", rows, cols, nnz);
-
-    // Crear matriz temporal para almacenar todos los elementos (incluyendo simétricos)
-    vector<vector<double>> temp_matrix(rows, vector<double>(cols, 0.0));
-    int actual_nnz = 0;
-
-    printf("Reading data\n");
-    // Leer datos
-    for (int i = 0; i < nnz; ++i) {
-        getline(file, line);
-        if (line.empty()) continue;
-
-        int row, col;
-        double value;
-        istringstream iss(line);
-        iss >> row >> col >> value;
-
-        // Convertir a índices basados en 0
-        row--;
-        col--;
-
-        // Almacenar elemento
-        if (temp_matrix[row][col] == 0) actual_nnz++;
-        temp_matrix[row][col] = value;
-
-        // Si es simétrica, almacenar también el elemento transpuesto
-        if (row != col) {
-            if (temp_matrix[col][row] == 0) actual_nnz++;
-            temp_matrix[col][row] = value;
-        }
-    }
-
-    file.close();
-    printf("Read ok\n");
-    // Construir CSR
-    CSRMatrix csr(rows, cols, actual_nnz);
-    csr.row_ptr[0] = 0;
-
-    int count = 0;
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < cols; ++j) {
-            if (temp_matrix[i][j] != 0) {
-                csr.values.push_back(temp_matrix[i][j]);
-                csr.columns.push_back(j);
-                count++;
-            }
-        }
-        csr.row_ptr[i+1] = count;
-    }
-
-    return csr;
-}
-
-// Función para crear matriz PETSc MATSEQAIJ a partir de CSR
-Mat createPETScMatrixFromCSR(CSRMatrix& csr) {
-    Mat A;
-    MatCreate(PETSC_COMM_SELF, &A);
-    MatSetSizes(A, PETSC_DECIDE, PETSC_DECIDE, csr.rows, csr.cols);
-    MatSetType(A, MATSEQAIJ);
-    
-    // Pre-asignación de memoria
-    vector<PetscInt> nnz_per_row(csr.rows);
-    for (int i = 0; i < csr.rows; ++i) {
-        nnz_per_row[i] = csr.row_ptr[i+1] - csr.row_ptr[i];
-    }
-    MatSeqAIJSetPreallocation(A, 0, nnz_per_row.data());
-    
-    // Insertar valores
-    for (int i = 0; i < csr.rows; ++i) {
-        int start = csr.row_ptr[i];
-        int end = csr.row_ptr[i+1];
-        int ncols = end - start;
-        
-        if (ncols > 0) {
-            MatSetValues(A, 1, &i, ncols, 
-                        csr.columns.data() + start, 
-                        csr.values.data() + start, 
-                        INSERT_VALUES);
-        }
-    }
-    
-    // Ensamblar matriz
-    MatAssemblyBegin(A, MAT_FINAL_ASSEMBLY);
-    MatAssemblyEnd(A, MAT_FINAL_ASSEMBLY);
-    
-    // Liberar memoria de CSR
-    csr.clear();
-    
-    return A;
-}
-
-
-// Función para imprimir la matriz CSR
-void printCSR(const CSRMatrix& csr) {
-    cout << "Valores: ";
-    for (double val : csr.values) cout << val << " ";
-    cout << endl;
-
-    cout << "Columnas: ";
-    for (int col : csr.columns) cout << col << " ";
-    cout << endl;
-
-    cout << "Punteros de fila: ";
-    for (int ptr : csr.row_ptr) cout << ptr << " ";
-    cout << endl;
-}
-
-
 int main(int argc, char* argv[]) {
   char   matrix_name[MAX_LINE/2];
   char   matrix_path[MAX_LINE];
@@ -231,30 +105,25 @@ int main(int argc, char* argv[]) {
   prefix = argv[5];
 
   fd_logs = fopen(logs, "w");
-  fprintf(fd_logs, "#Matrix_name;MNZ;M;K;Time;GFlops\n");
+  fprintf(fd_logs, "#Matrix_name;MNZ;M;K;Time_Ginkgo;GFLOPS_Ginkgo;Time_Petsc;GFLOPS_Petsc\n");
 
   printf("\n");
   printf("=====================================================\n");
   printf("|             %sSPMV DRIVER CONFIGURATION%s             |\n", COLOR_BOLDYELLOW, COLOR_RESET);
   printf("=====================================================\n");
   printf("| Minimum Time (s) : %s%-30.2f%s |\n", COLOR_BOLDCYAN, tmin, COLOR_RESET);
-  printf("| Test             : %s%-30c%s |\n", COLOR_BOLDCYAN, test, COLOR_RESET); 
+  printf("| Test             : %s%-30s%s |\n", COLOR_BOLDCYAN, "GINKGO REFERENCE", COLOR_RESET); 
   printf("| Matrix List      : %s%-30s%s |\n", COLOR_BOLDCYAN, argv[3], COLOR_RESET); 
   printf("| Output Log       : %s%-30s%s |\n", COLOR_BOLDCYAN, logs, COLOR_RESET); 
-  #ifdef LIB_PETSC
-  printf("| Library selected : %s%-30s%s |\n", COLOR_BOLDCYAN, "PETSc", COLOR_RESET); 
-  #else
-  printf("| Library selected : %s%-30s%s |\n", COLOR_BOLDCYAN, "Ginkgo", COLOR_RESET); 
-  #endif
   printf("=====================================================\n\n");
 
-  printf("============================================================================================================\n");
-  printf("|                                                   %sSPMV DRIVER%s                                            |\n", COLOR_BOLDYELLOW, COLOR_RESET);
-  printf("============================================================================================================\n");
-  printf("|                       MATRIX INFORMATION                    |               TARGET              |        |\n");
-  printf("+-------------------------------------------------------------+-----------------------------------+  TEST  |\n");
-  printf("|  MATRIX NAME                   NNZ          M          K    |    TIME        GFLOPS      ERR    |        |\n");
-  printf("+-------------------------------------------------------------+-----------------------------------+--------+\n");
+  printf("==================================================================================================================================\n");
+  printf("|                                         %sSPMV DRIVER FOR PETSC AND GINKGO EVALUATION%s                                            |\n", COLOR_BOLDYELLOW, COLOR_RESET);
+  printf("==================================================================================================================================\n");
+  printf("|                       MATRIX INFORMATION                    |         GINKGO        |          PETSc        |    VALIDATION    |\n");
+  printf("+-------------------------------------------------------------+-----------------------+-----------------------+------------------+\n");
+  printf("|  MATRIX NAME                   NNZ          M          K    |    TIME      GFLOPS   |   TIME       GFLOPS   |   ERR      TEST  |\n");
+  printf("+-------------------------------------------------------------+-----------------------+-----------------------+------------------+\n");
 
   while (matrix_list.getline(matrix_name, MAX_LINE)) {
     if (matrix_name[0] == '%') continue;
@@ -290,33 +159,31 @@ int main(int argc, char* argv[]) {
     const auto* values   = A_ginkgo->get_const_values();
     //----------------------------------------------------------------------------
     //----------------------------------------------------------------------------
-   
 
     //SPMV PETSc
-    for (int i = 0; i < nrows; i++)  {
-      if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
-    }
-
     PetscInitialize(&argc, &argv, NULL, NULL);
     MatInfo info;
     Mat A_petsc;
     Vec b_petsc, c_petsc;
     PetscScalar *b_set;
 
-    //CSRMatrix csr = readMTXToCSR(matrix_path);
-    //printf("Read csr done\n");
-    //Mat A = createPETScMatrixFromCSR(csr);
-    //PetscCall(MatCreateFromMTX(&A, matrix_path, PETSC_FALSE));
+    //With PETSC_TRUE, Petsc only calculates one of the two symetric parts of the matrix
+    PetscCall(MatCreateFromMTX(&A_petsc, matrix_path, PETSC_FALSE));
 
-    //MatGetSize(A_petsc, &nrows, &ncols);
-    //MatGetInfo(A_petsc, MAT_GLOBAL_SUM, &info);
-
-    //nnz = (PetscInt)info.nz_allocated; // Number of nonzeros
-    //nnz = (PetscInt)info.nz_used; // Number of nonzeros
-
-    MatCreate(PETSC_COMM_SELF, &A_petsc);
-    MatSetSizes(A_petsc, PETSC_DECIDE, PETSC_DECIDE, nrows, ncols);
-    MatSetType(A_petsc, MATSEQAIJ);
+    //MatCreate(PETSC_COMM_SELF, &A_petsc);
+    //MatSetSizes(A_petsc, PETSC_DECIDE, PETSC_DECIDE, nrows, ncols);
+    //MatSetType(A_petsc, MATSEQAIJ);
+    //MatSeqAIJSetPreallocation(A_petsc, 0, nnz_per_row.data());
+    //for (PetscInt i = 0; i < nrows; ++i) {
+        //PetscInt ncols = row_ptrs[i+1] - row_ptrs[i];
+        //if (ncols > 0)
+          //MatSetValues(A_petsc, 1, &i, ncols,
+                        //const_cast<PetscInt*>(col_idxs + row_ptrs[i]),
+                        //const_cast<PetscScalar*>(values + row_ptrs[i]),
+                        //INSERT_VALUES);
+    //}
+    //MatAssemblyBegin(A_petsc, MAT_FINAL_ASSEMBLY);
+    //MatAssemblyEnd(A_petsc, MAT_FINAL_ASSEMBLY);
 
     VecCreate(PETSC_COMM_WORLD, &b_petsc);
     VecSetSizes(b_petsc, PETSC_DECIDE, ncols);
@@ -327,37 +194,13 @@ int main(int argc, char* argv[]) {
     VecGetArray(b_petsc, &b_set);
     for (int i = 0; i < ncols; i++) b_set[i] = b_ginkgo->get_values()[i];
 
-    // Pre-asignación de memoria
     std::vector<PetscInt> nnz_per_row(nrows);
     for (PetscInt i = 0; i < nrows; ++i) {
         nnz_per_row[i] = row_ptrs[i+1] - row_ptrs[i];
     }
 
-    MatSeqAIJSetPreallocation(A_petsc, 0, nnz_per_row.data());
 
-    // Insertar valores
-    for (PetscInt i = 0; i < nrows; ++i) {
-        PetscInt ncols = row_ptrs[i+1] - row_ptrs[i];
-        if (ncols > 0) {
-            MatSetValues(A_petsc,
-                        1, &i,
-                        ncols,
-                        const_cast<PetscInt*>(col_idxs + row_ptrs[i]),
-                        const_cast<PetscScalar*>(values + row_ptrs[i]),
-                        INSERT_VALUES);
-        }
-    }
-
-    //const PetscInt *row_ptrs, *col_idx;
-    //PetscInt m, rownz; 
-    //PetscBool done;
-    //MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
-    //for (int i = 0; i < m; i++)  {
-      //if (row_ptrs[i+1] > row_ptrs[i]) nonzerorowcnt++;
-    //}
-    //nrows = m;
-
-    flops = 2.0 * nnz - nonzerorowcnt;
+    flops = 2.0 * nnz;
 
     time = 0.0; 
     nreps = 0; 
@@ -387,93 +230,34 @@ int main(int argc, char* argv[]) {
     
     const PetscScalar *c_array_petsc;
     VecGetArrayRead(c_petsc, &c_array_petsc); 
-    const ValueType *c_array_ginkgo = c_ginkgo->get_const_values();	    
-    for (int i = 0; i < 32; i++) printf("%.8f, %.8f\n", c_array_ginkgo[i], c_array_petsc[i]);
+    const ValueType *c_array_ginkgo = c_ginkgo->get_const_values();
+    err = gemm_validation(ncols, c_array_ginkgo, c_array_petsc);
 
-    exit(-1);
-    /* 
-    if (test == 'T') {
-      ValueType *base_values;
-      IndexType *base_row_ptr, *base_col_idx;
-      int base_nrows, base_ncols, base_nnz;
-      
-      ValueType *base_c = (ValueType *)calloc(base_ncols, sizeof(ValueType));
-
-      #ifdef LIB_PETSC
-      const PetscInt *row_ptrs, *col_idx;
-      const PetscScalar *values;
-      PetscInt m;
-      PetscBool done;
-      MatGetRowIJ(A, 0, PETSC_FALSE, PETSC_FALSE, &m, &row_ptrs, &col_idx, &done);
-      MatSeqAIJGetArrayRead(A, &values);
-      
-      const PetscScalar *c_array, *b_array;
-      VecGetArrayRead(b, &b_array); 
-      VecGetArrayRead(c, &c_array); 
-
-      #else
-      //const ValueType   *values = A->get_const_values();
-      const ValueType  *b_array = b->get_const_values();
-      #endif
-    
-      //Evaluate Baseline
-      basetime  = 0.0; 
-      nreps = 0; 
-      t1 = dclock();
-      while (basetime <= tmin) {
-        spmv_baseline(base_row_ptr, base_col_idx, base_values, base_ncols, b_array, base_c);
-        nreps++;
-        t2 = dclock();
-        basetime = (t2 > t1 ? t2 - t1: 0.0);
-      }
-
-      basetime   = basetime / nreps;
-      baseGFLOPS = flops / (1.0e+9 * basetime);
-      err = gemm_validation(base_ncols, base_c, c_array);
-      free(base_c);
-        
-      //-------------------------------------------------------------------------
-      //Alignment issue?
-      //-------------------------------------------------------------------------
-      //Remove this for a normal execution
-      //free(values_m);
-      //free(row_ptrs_m);
-      //free(col_idx_m);
-      //-------------------------------------------------------------------------
-
-    } else*/ 
-    err = 0.0; 
-    
     std::filesystem::path pathObj(matrix_name);
     std::string pname = pathObj.filename().string();
 
-      printf("| %s%-25s%s %10zu  %10d %10d |  %8.2e   %s%8.2f%s     %8.2e |", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, nnz, nrows, ncols, time, COLOR_BOLDCYAN, GFLOPS, COLOR_RESET, err);
+    printf("| %s%-25s%s %10zu  %10d %10d |  %s%8.2e %8.2f%s    |  %s%8.2e %8.2f%s    | %8.2e ", COLOR_BOLDYELLOW, pname.c_str(), COLOR_RESET, nnz, nrows, ncols, COLOR_BOLDCYAN, time_ginkgo, GFLOPS_ginkgo, COLOR_RESET, COLOR_BOLDMAGENTA, time_petsc, GFLOPS_petsc, COLOR_RESET, err);
 
-      if (test == 'T')
-        if (err < err_limit) printf("   %sOK%s   |\n", COLOR_BOLDGREEN,  COLOR_RESET);
-        else                 printf("   %sERR%s  |\n", COLOR_BOLDRED,    COLOR_RESET);
-      else                   printf("   %s--%s   |\n", COLOR_BOLDYELLOW, COLOR_RESET);
+    if (err < err_limit) printf("   %sOK%s   |\n", COLOR_BOLDGREEN,  COLOR_RESET);
+    else                 printf("   %sERR%s  |\n", COLOR_BOLDRED,    COLOR_RESET);
 
-      fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2f;%.2e;%.2f\n", pname.c_str(), nnz, nrows, ncols, time, GFLOPS, basetime, baseGFLOPS);
+    fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2e;%.2f;%.2f\n", pname.c_str(), nnz, nrows, ncols, time_ginkgo, GFLOPS_ginkgo, time_petsc, GFLOPS_petsc);
 
-      MatDestroy(&A_petsc);
-      VecDestroy(&b_petsc);
-      VecDestroy(&c_petsc);
+    MatDestroy(&A_petsc);
+    VecDestroy(&b_petsc);
+    VecDestroy(&c_petsc);
       
-      A_ginkgo.reset();
-      b_ginkgo.reset();
-      c_ginkgo.reset();
+    A_ginkgo.reset();
+    b_ginkgo.reset();
+    c_ginkgo.reset();
       
       
-    }
+  }
 
-    printf("+-------------------------------------------------------------+-----------------------------------+--------+\n");
+  printf("+-------------------------------------------------------------+-----------------------+-----------------------+------------------+\n");
 
-    #ifdef LIB_PETSC
-    PetscFinalize();
-    #endif
+  PetscFinalize();
+  fclose(fd_logs);
 
-    fclose(fd_logs);
-
-    return 0;
+  return 0;
 }

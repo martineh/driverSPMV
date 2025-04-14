@@ -1,2 +1,2 @@
-matrix/G2_circuit.mtx
-matrix/pre2.mtx
+AMD/G2_circuit/G2_circuit.mtx
+ATandT/pre2/pre2.mtx
