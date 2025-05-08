@@ -30,13 +30,13 @@ void spmv_baseline (const IndexType* row_ptrs, const IndexType* col_idxs, const 
     ValueType sum = 0.0;
     for (IndexType k = row_ptrs[row]; k < row_ptrs[row + 1]; ++k) {
       sum += values[k] * b[col_idxs[k]];
-      //if (row < 2) printf("c[%d] = (%.5f += %.5f * %.5f) [%d - %d]\n", row, sum, values[k], b[col_idxs[k]], row_ptrs[row], row_ptrs[row + 1]);
+      if (row < 1) printf("c[%d] = (%.5f += %.5f * %.5f) [%d - %d]\n", row, sum, values[k], b[col_idxs[k]], row_ptrs[row], row_ptrs[row + 1]);
     }
     c[row] = sum;
   }
 }
 
-double gemm_validation(size_t m, const ValueType *Vref, const ValueType *V) {
+double gemv_validation(size_t m, const ValueType *Vref, const ValueType *V) {
   double error = 0.0;
   double nrm   = 0.0;
   double tmp;
@@ -46,6 +46,8 @@ double gemm_validation(size_t m, const ValueType *Vref, const ValueType *V) {
     nrm += tmp*tmp;
     tmp = (double) dabs(Vref[i]-V[i]);
     error += tmp*tmp;
+    printf("Vref[%zu]%.5f - V[%zu]=%.5f\n", i, Vref[i], i, V[i]);
+    if (i > 20) { exit(-1); } 
   }
 
   if ( nrm!=0.0 ) error = sqrt(error) / sqrt(nrm);
@@ -55,24 +57,6 @@ double gemm_validation(size_t m, const ValueType *Vref, const ValueType *V) {
 }
 
 
-
-struct CSRMatrix {
-    vector<double> values;     // Valores no nulos
-    vector<int> columns;       // Índices de columna
-    vector<int> row_ptr;       // Punteros de fila
-    int rows, cols, nnz;       // Filas, columnas, elementos no nulos
-
-    // Constructor
-    CSRMatrix(int r, int c, int n) : rows(r), cols(c), nnz(n) {
-        row_ptr.resize(rows + 1, 0);
-   }
-       // Liberar memoria
-    void clear() {
-        values.clear();
-        columns.clear();
-        row_ptr.clear();
-    }
-};
 
 
 int main(int argc, char* argv[]) {
@@ -157,51 +141,14 @@ int main(int argc, char* argv[]) {
     const auto* row_ptrs = A_ginkgo->get_const_row_ptrs();
     const auto* col_idxs = A_ginkgo->get_const_col_idxs();
     const auto* values   = A_ginkgo->get_const_values();
-    //----------------------------------------------------------------------------
-    //----------------------------------------------------------------------------
+    const ValueType *b   = c_ginkgo->get_const_values();
+    
+    ValueType *Cbase = (ValueType *) malloc (sizeof(ValueType) * ncols);
 
-    //SPMV PETSc
-    PetscInitialize(&argc, &argv, NULL, NULL);
-    MatInfo info;
-    Mat A_petsc;
-    Vec b_petsc, c_petsc;
-    PetscScalar *b_set;
-
-    //With PETSC_TRUE, Petsc only calculates one of the two symetric parts of the matrix
-    PetscCall(MatCreateFromMTX(&A_petsc, matrix_path, PETSC_FALSE));
-
-    //MatCreate(PETSC_COMM_SELF, &A_petsc);
-    //MatSetSizes(A_petsc, PETSC_DECIDE, PETSC_DECIDE, nrows, ncols);
-    //MatSetType(A_petsc, MATSEQAIJ);
-    //MatSeqAIJSetPreallocation(A_petsc, 0, nnz_per_row.data());
-    //for (PetscInt i = 0; i < nrows; ++i) {
-        //PetscInt ncols = row_ptrs[i+1] - row_ptrs[i];
-        //if (ncols > 0)
-          //MatSetValues(A_petsc, 1, &i, ncols,
-                        //const_cast<PetscInt*>(col_idxs + row_ptrs[i]),
-                        //const_cast<PetscScalar*>(values + row_ptrs[i]),
-                        //INSERT_VALUES);
-    //}
-    //MatAssemblyBegin(A_petsc, MAT_FINAL_ASSEMBLY);
-    //MatAssemblyEnd(A_petsc, MAT_FINAL_ASSEMBLY);
-
-    VecCreate(PETSC_COMM_WORLD, &b_petsc);
-    VecSetSizes(b_petsc, PETSC_DECIDE, ncols);
-    VecSetFromOptions(b_petsc);
-    VecDuplicate(b_petsc, &c_petsc);
-    VecSet(c_petsc, 0.0);
-
-    VecGetArray(b_petsc, &b_set);
-    for (int i = 0; i < ncols; i++) b_set[i] = b_ginkgo->get_values()[i];
-
-    std::vector<PetscInt> nnz_per_row(nrows);
-    for (PetscInt i = 0; i < nrows; ++i) {
-        nnz_per_row[i] = row_ptrs[i+1] - row_ptrs[i];
-    }
-
-
+    //--------------------------------------------------
+    // SPMV GINKGO or OPTIMIZED
+    //--------------------------------------------------
     flops = 2.0 * nnz;
-
     time = 0.0; 
     nreps = 0; 
     t1    = dclock();
@@ -213,25 +160,30 @@ int main(int argc, char* argv[]) {
     }
     time_ginkgo   = time / nreps;
     GFLOPS_ginkgo = flops / (1.0e+9 * time_ginkgo);
+    //--------------------------------------------------
 
 
+    //--------------------------------------------------
+    // SPMV Base
+    //--------------------------------------------------
     time  = 0.0; 
     nreps = 0; 
     t1    = dclock();
     while (time <= tmin) {
-      MatMult(A_petsc, b_petsc, c_petsc); //SPMV Petsc
+      spmv_baseline(row_ptrs, col_idxs, values, nrows, b, Cbase); //SPMV Base
       nreps++;
       t2 = dclock();
       time = (t2 > t1 ? t2 - t1: 0.0);
     }
     time_petsc   = time / nreps;
     GFLOPS_petsc = flops / (1.0e+9 * time_petsc);
+    //--------------------------------------------------
     
-    
-    const PetscScalar *c_array_petsc;
-    VecGetArrayRead(c_petsc, &c_array_petsc); 
+    //const PetscScalar *c_array_petsc;
+    //VecGetArrayRead(c_petsc, &c_array_petsc); 
+
     const ValueType *c_array_ginkgo = c_ginkgo->get_const_values();
-    err = gemm_validation(ncols, c_array_ginkgo, c_array_petsc);
+    err = gemv_validation(ncols, c_array_ginkgo, Cbase);
 
     std::filesystem::path pathObj(matrix_name);
     std::string pname = pathObj.filename().string();
@@ -243,15 +195,15 @@ int main(int argc, char* argv[]) {
 
     fprintf(fd_logs, "%s;%zu;%d;%d;%.2e;%.2e;%.2f;%.2f\n", pname.c_str(), nnz, nrows, ncols, time_ginkgo, GFLOPS_ginkgo, time_petsc, GFLOPS_petsc);
 
-    MatDestroy(&A_petsc);
-    VecDestroy(&b_petsc);
-    VecDestroy(&c_petsc);
+    //MatDestroy(&A_petsc);
+    //VecDestroy(&b_petsc);
+    //VecDestroy(&c_petsc);
       
     A_ginkgo.reset();
     b_ginkgo.reset();
     c_ginkgo.reset();
       
-      
+    free(Cbase);   
   }
 
   printf("+-------------------------------------------------------------+-----------------------+-----------------------+------------------+\n");

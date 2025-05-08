@@ -1,2 +1,2 @@
-AMD/G2_circuit/G2_circuit.mtx
 ATandT/pre2/pre2.mtx
+ATandT/twotone/twotone.mtx
